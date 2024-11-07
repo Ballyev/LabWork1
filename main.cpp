@@ -111,3 +111,150 @@ PictureBMP::PictureBMP(const std::string &filename) {
             }
         }
     }
+
+    file.close();
+}
+
+
+PictureBMP::~PictureBMP() {
+    FreeMemory(infoHeader.height);
+}
+
+
+void PictureBMP::Save(const std::string &filename) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("File save error.");
+    }
+
+    int byte = infoHeader.height * infoHeader.width * 4;
+
+    std::cout << "File " << filename << " use " << byte << " bytes." << std::endl;
+
+    file.write(reinterpret_cast<const char *>(&header), sizeof(header));
+    file.write(reinterpret_cast<const char *>(&infoHeader), sizeof(infoHeader));
+
+    for (int i = 0; i < infoHeader.height; ++i) {
+        for (int j = 0; j < infoHeader.width; ++j) {
+            file.write(reinterpret_cast<const char *>(&data[i][j]), sizeof(Pixel));
+        }
+    }
+    file.close();
+}
+
+
+
+
+void PictureBMP::Rotate90() {
+    Pixel** rotatedData = new Pixel*[infoHeader.width];
+    for (int i = 0; i < infoHeader.width; ++i) {
+        rotatedData[i] = new Pixel[infoHeader.height];
+    }
+
+    for (int i = 0; i < infoHeader.height; ++i) {
+        for (int j = 0; j < infoHeader.width; ++j) {
+            rotatedData[j][infoHeader.height - i - 1] = data[i][j];
+        }
+    }
+
+    FreeMemory(infoHeader.height);
+
+    data = rotatedData;
+    std::swap(infoHeader.width, infoHeader.height);
+}
+
+
+void PictureBMP::RotateCounter90() {
+    Pixel** rotatedData = new Pixel*[infoHeader.width];
+    for (int i = 0; i < infoHeader.width; ++i) {
+        rotatedData[i] = new Pixel[infoHeader.height];
+    }
+
+    for (int i = 0; i < infoHeader.height; ++i) {
+        for (int j = 0; j < infoHeader.width; ++j) {
+            rotatedData[infoHeader.width - j - 1][i] = data[i][j];
+        }
+    }
+
+    FreeMemory(infoHeader.height);
+
+    data = rotatedData;
+    std::swap(infoHeader.width, infoHeader.height);
+}
+
+void PictureBMP::GaussianFilter() {
+    float kernel[3][3] = {
+        {1 / 16.0f, 2 / 16.0f, 1 / 16.0f},
+        {2 / 16.0f, 4 / 16.0f, 2 / 16.0f},
+        {1 / 16.0f, 2 / 16.0f, 1 / 16.0f}
+    };
+
+    Pixel** tempData = new Pixel*[infoHeader.height];
+    for (int i = 0; i < infoHeader.height; ++i) {
+        tempData[i] = new Pixel[infoHeader.width];
+    }
+
+    for (int y = 0; y < infoHeader.height; ++y) {
+        for (int x = 0; x < infoHeader.width; ++x) {
+            float sumRed = 0, sumGreen = 0, sumBlue = 0;
+
+
+            for (int ky = -1; ky <= 1; ++ky) {
+                for (int kx = -1; kx <= 1; ++kx) {
+                    int nx = x + kx;
+                    int ny = y + ky;
+
+                    if (nx < 0) nx = 0;
+                    if (nx >= infoHeader.width) nx = infoHeader.width - 1;
+                    if (ny < 0) ny = 0;
+                    if (ny >= infoHeader.height) ny = infoHeader.height - 1;
+
+
+                    sumRed   += data[ny][nx].red * kernel[ky + 1][kx + 1];
+                    sumGreen += data[ny][nx].green * kernel[ky + 1][kx + 1];
+                    sumBlue  += data[ny][nx].blue * kernel[ky + 1][kx + 1];
+                }
+            }
+
+
+            tempData[y][x].red = static_cast<uint8_t>((sumRed < 0) ? 0 : ((sumRed > 255) ? 255 : sumRed));
+            tempData[y][x].green = static_cast<uint8_t>((sumGreen < 0) ? 0 : ((sumGreen > 255) ? 255 : sumGreen));
+            tempData[y][x].blue = static_cast<uint8_t>((sumBlue < 0) ? 0 : ((sumBlue > 255) ? 255 : sumBlue));
+        }
+    }
+
+
+    for (int y = 0; y < infoHeader.height; ++y) {
+        for (int x = 0; x < infoHeader.width; ++x) {
+            data[y][x] = tempData[y][x];
+        }
+    }
+
+    for (int i = 0; i < infoHeader.height; ++i) {
+        delete[] tempData[i];
+    }
+    delete[] tempData;
+}
+
+
+
+int main() {
+    try {
+        PictureBMP image("input.bmp");
+        PictureBMP imageCounterClockwise("input.bmp");
+
+        image.Rotate90();
+        image.Save("output_right-handed.bmp");
+
+        imageCounterClockwise.RotateCounter90();
+        imageCounterClockwise.Save("output_counterright-handed.bmp");
+
+
+        image.GaussianFilter();
+        image.Save("blur.bmp");
+
+    } catch (const std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
+    return 0;
+}
