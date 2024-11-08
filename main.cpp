@@ -1,3 +1,5 @@
+//Ballyyev Eziz ballyev.006@gmail.com
+//Work with BMP
 #include <iostream>
 #include <fstream>
 #include <cstdint>
