@@ -299,7 +299,6 @@ double measureTime(std::function<void()> func) {
 }
 int main() {
     try {
-        // Тестируем последовательные версии
         double seq_rotate90 = measureTime([&]() {
             PictureBMP image("input.bmp");
             image.Rotate90Sequential();
@@ -318,7 +317,7 @@ int main() {
             image.Save("blur_seq.bmp");
         });
 
-        // Тестируем параллельные версии
+
         double par_rotate90 = measureTime([&]() {
             PictureBMP image("input.bmp");
             image.Rotate90();
@@ -337,7 +336,7 @@ int main() {
             image.Save("blur_par.bmp");
         });
 
-        // Вывод результатов
+
         std::cout << "=== Sequential ===\n";
         std::cout << "Rotate90: " << seq_rotate90 << " ms\n";
         std::cout << "RotateCounter90: " << seq_rotateCounter90 << " ms\n";
