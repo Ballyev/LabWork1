@@ -1,8 +1,11 @@
-//Ballyyev Eziz ballyev.006@gmail.com
-//Work with BMP
 #include <iostream>
 #include <fstream>
 #include <cstdint>
+#include <stdexcept>
+#include <algorithm>
+#include <omp.h>
+#include <chrono>
+#include <functional>
 
 #pragma pack(push, 1)
 struct BMPHeader {
@@ -42,6 +45,9 @@ public:
     void Rotate90();
     void RotateCounter90();
     void GaussianFilter();
+    void Rotate90Sequential();
+    void RotateCounter90Sequential();
+    void GaussianFilterSequential();
 
 private:
     BMPHeader header;
@@ -79,59 +85,36 @@ void PictureBMP::FreeMemory(int height) {
     }
 }
 
-
 PictureBMP::PictureBMP(const std::string &filename) {
     std::ifstream file(filename, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("Error open file.");
-    }
-
+    if (!file) throw std::runtime_error("Error open file.");
     file.read(reinterpret_cast<char *>(&header), sizeof(header));
-    if (header.fileType != 0x4D42) {
-        throw std::runtime_error("File format is not BMP.");
-    }
-
+    if (header.fileType != 0x4D42) throw std::runtime_error("File format is not BMP.");
     file.read(reinterpret_cast<char *>(&infoHeader), sizeof(infoHeader));
-
     infoHeader.height = std::abs(infoHeader.height);
     infoHeader.width = std::abs(infoHeader.width);
-
-    if (infoHeader.width == 0 || infoHeader.height == 0) {
-        throw std::runtime_error("unexceptable file size.");
-    }
+    if (infoHeader.width == 0 || infoHeader.height == 0) throw std::runtime_error("unexceptable file size.");
     file.seekg(header.offsetData, file.beg);
 
-
     Memory(infoHeader.height, infoHeader.width);
-
 
     for (int i = 0; i < infoHeader.height; ++i) {
         for (int j = 0; j < infoHeader.width; ++j) {
             file.read(reinterpret_cast<char *>(&data[i][j]), sizeof(Pixel));
-            if (!file) {
-                throw std::runtime_error("Error file read.");
-            }
+            if (!file) throw std::runtime_error("Error file read.");
         }
     }
 
     file.close();
 }
 
-
 PictureBMP::~PictureBMP() {
     FreeMemory(infoHeader.height);
 }
 
-
 void PictureBMP::Save(const std::string &filename) {
     std::ofstream file(filename, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("File save error.");
-    }
-
-    int byte = infoHeader.height * infoHeader.width * 4;
-
-    std::cout << "File " << filename << " use " << byte << " bytes." << std::endl;
+    if (!file) throw std::runtime_error("File save error.");
 
     file.write(reinterpret_cast<const char *>(&header), sizeof(header));
     file.write(reinterpret_cast<const char *>(&infoHeader), sizeof(infoHeader));
@@ -141,13 +124,11 @@ void PictureBMP::Save(const std::string &filename) {
             file.write(reinterpret_cast<const char *>(&data[i][j]), sizeof(Pixel));
         }
     }
+
     file.close();
 }
 
-
-
-
-void PictureBMP::Rotate90() {
+void PictureBMP::Rotate90Sequential() {
     Pixel** rotatedData = new Pixel*[infoHeader.width];
     for (int i = 0; i < infoHeader.width; ++i) {
         rotatedData[i] = new Pixel[infoHeader.height];
@@ -160,13 +141,29 @@ void PictureBMP::Rotate90() {
     }
 
     FreeMemory(infoHeader.height);
-
     data = rotatedData;
     std::swap(infoHeader.width, infoHeader.height);
 }
 
+void PictureBMP::Rotate90() {
+    Pixel** rotatedData = new Pixel*[infoHeader.width];
+    for (int i = 0; i < infoHeader.width; ++i) {
+        rotatedData[i] = new Pixel[infoHeader.height];
+    }
 
-void PictureBMP::RotateCounter90() {
+    #pragma omp parallel for
+    for (int i = 0; i < infoHeader.height; ++i) {
+        for (int j = 0; j < infoHeader.width; ++j) {
+            rotatedData[j][infoHeader.height - i - 1] = data[i][j];
+        }
+    }
+
+    FreeMemory(infoHeader.height);
+
+    data = rotatedData;
+    std::swap(infoHeader.width, infoHeader.height);
+}
+void PictureBMP::RotateCounter90Sequential() {
     Pixel** rotatedData = new Pixel*[infoHeader.width];
     for (int i = 0; i < infoHeader.width; ++i) {
         rotatedData[i] = new Pixel[infoHeader.height];
@@ -179,9 +176,66 @@ void PictureBMP::RotateCounter90() {
     }
 
     FreeMemory(infoHeader.height);
+    data = rotatedData;
+    std::swap(infoHeader.width, infoHeader.height);
+}
+
+void PictureBMP::RotateCounter90() {
+    Pixel** rotatedData = new Pixel*[infoHeader.width];
+    for (int i = 0; i < infoHeader.width; ++i) {
+        rotatedData[i] = new Pixel[infoHeader.height];
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < infoHeader.height; ++i) {
+        for (int j = 0; j < infoHeader.width; ++j) {
+            rotatedData[infoHeader.width - j - 1][i] = data[i][j];
+        }
+    }
+
+    FreeMemory(infoHeader.height);
 
     data = rotatedData;
     std::swap(infoHeader.width, infoHeader.height);
+}
+void PictureBMP::GaussianFilterSequential() {
+    const float kernel[3][3] = {
+        {1/16.0f, 2/16.0f, 1/16.0f},
+        {2/16.0f, 4/16.0f, 2/16.0f},
+        {1/16.0f, 2/16.0f, 1/16.0f}
+    };
+
+    Pixel** tempData = new Pixel*[infoHeader.height];
+    for (int i = 0; i < infoHeader.height; ++i) {
+        tempData[i] = new Pixel[infoHeader.width];
+    }
+
+    for (int y = 0; y < infoHeader.height; ++y) {
+        for (int x = 0; x < infoHeader.width; ++x) {
+            float sumRed = 0, sumGreen = 0, sumBlue = 0;
+
+            for (int ky = -1; ky <= 1; ++ky) {
+                for (int kx = -1; kx <= 1; ++kx) {
+                    int nx = std::clamp(x + kx, 0, infoHeader.width - 1);
+                    int ny = std::clamp(y + ky, 0, infoHeader.height - 1);
+
+                    float weight = kernel[ky + 1][kx + 1];
+                    sumRed   += data[ny][nx].red * weight;
+                    sumGreen += data[ny][nx].green * weight;
+                    sumBlue  += data[ny][nx].blue * weight;
+                }
+            }
+
+            tempData[y][x] = {
+                static_cast<uint8_t>(std::clamp(sumBlue, 0.0f, 255.0f)),
+                static_cast<uint8_t>(std::clamp(sumGreen, 0.0f, 255.0f)),
+                static_cast<uint8_t>(std::clamp(sumRed, 0.0f, 255.0f))
+            };
+        }
+    }
+
+    FreeMemory(infoHeader.height);
+    data = tempData;
 }
 
 void PictureBMP::GaussianFilter() {
@@ -196,10 +250,10 @@ void PictureBMP::GaussianFilter() {
         tempData[i] = new Pixel[infoHeader.width];
     }
 
+    #pragma omp parallel for
     for (int y = 0; y < infoHeader.height; ++y) {
         for (int x = 0; x < infoHeader.width; ++x) {
             float sumRed = 0, sumGreen = 0, sumBlue = 0;
-
 
             for (int ky = -1; ky <= 1; ++ky) {
                 for (int kx = -1; kx <= 1; ++kx) {
@@ -211,20 +265,18 @@ void PictureBMP::GaussianFilter() {
                     if (ny < 0) ny = 0;
                     if (ny >= infoHeader.height) ny = infoHeader.height - 1;
 
-
-                    sumRed   += data[ny][nx].red * kernel[ky + 1][kx + 1];
-                    sumGreen += data[ny][nx].green * kernel[ky + 1][kx + 1];
-                    sumBlue  += data[ny][nx].blue * kernel[ky + 1][kx + 1];
+                    float weight = kernel[ky + 1][kx + 1];
+                    sumRed += data[ny][nx].red * weight;
+                    sumGreen += data[ny][nx].green * weight;
+                    sumBlue += data[ny][nx].blue * weight;
                 }
             }
 
-
-            tempData[y][x].red = static_cast<uint8_t>((sumRed < 0) ? 0 : ((sumRed > 255) ? 255 : sumRed));
-            tempData[y][x].green = static_cast<uint8_t>((sumGreen < 0) ? 0 : ((sumGreen > 255) ? 255 : sumGreen));
-            tempData[y][x].blue = static_cast<uint8_t>((sumBlue < 0) ? 0 : ((sumBlue > 255) ? 255 : sumBlue));
+            tempData[y][x].red = static_cast<uint8_t>(std::clamp(sumRed, 0.0f, 255.0f));
+            tempData[y][x].green = static_cast<uint8_t>(std::clamp(sumGreen, 0.0f, 255.0f));
+            tempData[y][x].blue = static_cast<uint8_t>(std::clamp(sumBlue, 0.0f, 255.0f));
         }
     }
-
 
     for (int y = 0; y < infoHeader.height; ++y) {
         for (int x = 0; x < infoHeader.width; ++x) {
@@ -239,24 +291,71 @@ void PictureBMP::GaussianFilter() {
 }
 
 
-
+double measureTime(std::function<void()> func) {
+    auto start = std::chrono::high_resolution_clock::now();
+    func();
+    auto end = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
 int main() {
     try {
-        PictureBMP image("input.bmp");
-        PictureBMP imageCounterClockwise("input.bmp");
+        // Тестируем последовательные версии
+        double seq_rotate90 = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.Rotate90Sequential();
+            image.Save("output_seq_90.bmp");
+        });
 
-        image.Rotate90();
-        image.Save("output_right-handed.bmp");
+        double seq_rotateCounter90 = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.RotateCounter90Sequential();
+            image.Save("output_seq_counter90.bmp");
+        });
 
-        imageCounterClockwise.RotateCounter90();
-        imageCounterClockwise.Save("output_counterright-handed.bmp");
+        double seq_gaussian = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.GaussianFilterSequential();
+            image.Save("blur_seq.bmp");
+        });
 
+        // Тестируем параллельные версии
+        double par_rotate90 = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.Rotate90();
+            image.Save("output_par_90.bmp");
+        });
 
-        image.GaussianFilter();
-        image.Save("blur.bmp");
+        double par_rotateCounter90 = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.RotateCounter90();
+            image.Save("output_par_counter90.bmp");
+        });
 
-    } catch (const std::exception &e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        double par_gaussian = measureTime([&]() {
+            PictureBMP image("input.bmp");
+            image.GaussianFilter();
+            image.Save("blur_par.bmp");
+        });
+
+        // Вывод результатов
+        std::cout << "=== Sequential ===\n";
+        std::cout << "Rotate90: " << seq_rotate90 << " ms\n";
+        std::cout << "RotateCounter90: " << seq_rotateCounter90 << " ms\n";
+        std::cout << "GaussianFilter: " << seq_gaussian << " ms\n\n";
+
+        std::cout << "=== Parallel ===\n";
+        std::cout << "Rotate90: " << par_rotate90 << " ms\n";
+        std::cout << "RotateCounter90: " << par_rotateCounter90 << " ms\n";
+        std::cout << "GaussianFilter: " << par_gaussian << " ms\n\n";
+
+        std::cout << "=== Speedup ===\n";
+        std::cout << "Rotate90: " << seq_rotate90/par_rotate90 << "x\n";
+        std::cout << "RotateCounter90: " << seq_rotateCounter90/par_rotateCounter90 << "x\n";
+        std::cout << "GaussianFilter: " << seq_gaussian/par_gaussian << "x\n";
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
     }
     return 0;
 }
